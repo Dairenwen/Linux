@@ -1,0 +1,21 @@
+进程替换：
+以新的代码数据替换掉当前的代码数据就可以理解为进程替换
+
+1.程序替换没有创建新的进程，只进行进程的程序代码和数据的替换工作，即将磁盘中的代码和数据替换掉内存中的代码数据，原进程的pid没有改变
+2.代码可以由操作系统进行写时拷贝，exec函数进行代码的重新替换，不会影响到父进程，也不会执行原exec后面的代码
+3.如果exec函数执行成功，程序被成功替换，没有返回值，否则有返回值
+4.Linux中形成的可执行程序有格式，ELF，可执行表头，可执行程序的入口就在表中
+5.环境变量可以继承给子进程，或者说程序替换不会替换环境变量；如果要替换环境变量：新增环境变量（在父进程putenv增加环境变量）；彻底替换环境变量（传递第三方environ/自己写的数组指针）
+
+相关系统调用接口：（文件可以调用含有任何语言的文本，包括py，ja，php，脚本）
+int execl(const char *path, const char *arg, ...);（...指的是可变参数列表）
+l指的是list，类似链表，先传参路径，再传递选项
+int execlp(const char *file, const char *arg, ...);
+p指的是环境变量，传文件名，去环境变量中寻找，再传递选项
+int execle(const char *path, const char *arg,..., char * const envp[]);
+int execv(const char *path, char *const argv[]);
+v指的是vector，类似数组，先传参路径，再传递数组（内含选项）
+int execvp(const char *file, char *const argv[]);
+p指的是环境变量，传文件名，去环境变量中寻找，再传递数组
+int execvpe(const char *file, char *const argv[], char *const envp[]);
+
