@@ -1,0 +1,105 @@
+基础IO：
+共识原理：
+1.文件=内容+属性；
+2.文件分为打开的文件和没打开的文件
+3.文件由进程打开，必须先被加载到内存
+4.没打开的文件保存在磁盘上，打开的文件在内存中，OS先描述再组织管理多个文件，结构体为文件控制块
+
+先来回忆一下C语言文件操作接口：
+当前路径就是进程的当前路径，保存在/proc/cwd中，如果没有指明路径，文件默认保存在这个路径下，
+w：写入，没有文件就创建，对文件进行清空；a: 写入，没有文件就创建，对文件进行追加写入
+
+程序启动默认打开三个流，C语言stdin（键盘文件）、stdout（显示器文件）、stderr（显示器文件）
+					   C++cin、cout、cerr
+
+再谈系统调用：
+文件在磁盘上属于外部数据，程序不能直接获得文件数据，只能通过系统调用；常见的fwrite，fread，fscanf，fprintf都是库函数
+系统调用接口有open，write，close
+open：参数一文件名，默认路径为当前路径；
+	     参数二O_RDONLY：以只读模式打开文件，O_WRONLY：以只写模式打开文件，O_RDWR：以读写模式打开文件，于C++文件操作类似，多选使用按位或|，如果要实现C语言w模式，需要|O_CREAT|O_TRUNC，没有文件去创建以及清空已有内容，如果要实现C语言a模式，需要|O_CREAT|O_APPEND，没有文件去创建以及追加到已有内容
+	   （参数三）权限设置0xxx，临时更改当前进程的权限掩码umask(0)；
+
+但是open返回值的作用并不理解，为什么是一个整形：
+	访问文件的本质：文件从磁盘中加载到内存中，先描述再组织，描述为file_struct，用双向链表组织，file_struct中保存的有文件的地址、基本属性权限大小读写位置等等，但是一个进程可能打开多个文件，怎么区分？其实PCB中有struct files_struct* file；file变量保存的是结构体地址，什么结构体？files_struct，其中保存的有struct file*类型的数组指针，数组中保存的是这个进程打开文件的file_struct地址，open返回的是对应数组下标，也就是文件描述符
+struct files_struct {
+	atomic_t count;                  // 引用计数（用来关闭文件）
+	bool resize_in_progress;         // 是否正在调整大小
+	wait_queue_head_t resize_wait;   // 调整大小时的等待队列
+
+	struct fdtable __rcu *fdt;       // 当前文件描述符表
+	struct fdtable fdtab;            // 初始文件描述符表
+
+	/* 用于执行时关闭的位图 */
+	unsigned long close_on_exec_init[1];
+	unsigned long open_fds_init[1];
+
+	/* 用于执行时关闭的位图指针 */
+	unsigned long *close_on_exec;
+	unsigned long *open_fds;
+
+	/* 最大文件描述符数量 */
+	unsigned long max_fds;
+
+	/* 位图的大小（以字为单位） */
+	unsigned long max_fdset;
+
+	/* 当前文件描述符的最大索引 */
+	unsigned long next_fd;
+
+	/* 用于共享检查的保护锁 */
+	spinlock_t file_lock ____cacheline_aligned_in_smp;
+	
+	/* 执行 exec() 时关闭的文件描述符的列表 */
+	struct list_head fdt_list;
+	
+	/* 支持非阻塞操作的文件描述符列表 */
+	struct file __rcu **fd_array;
+};
+
+struct file {
+	union {
+		struct llist_node	fu_llist;
+		struct rcu_head		fu_rcuhead;
+	} f_u;
+	struct path		f_path;			/* 文件路径信息 */
+	struct inode		*f_inode;		/* 关联的 inode */
+	const struct file_operations	*f_op;	/* 文件操作函数集 */
+
+	/* 保护 f_ep_links, f_flags. */
+	spinlock_t		f_lock;
+	enum rw_hint		f_write_hint;
+	atomic_long_t		f_count;		/* 引用计数 */
+	unsigned int 		f_flags;		/* 文件标志 (O_RDONLY 等) */
+	fmode_t			f_mode;			/* 文件模式 (读/写权限) */
+	struct mutex		f_pos_lock;		/* 位置锁 */
+	loff_t			f_pos;			/* 文件偏移量 (当前位置) */
+	struct fown_struct	f_owner;		/* 进程所有权信息 */
+	const struct cred	*f_cred;		/* 凭证信息 (权限) */
+	struct file_ra_state	f_ra;			/* 预读状态 */
+
+	unsigned long		f_version;		/* 版本号，用于检测变更 */
+
+	#ifdef CONFIG_SECURITY
+	void			*f_security;		/* 安全模块数据 */
+	#endif
+	/* 对于省内存的系统，删除以下成员 */
+	#ifdef !CONFIG_SMALL_MEMORY
+	void			*private_data;		/* 驱动私有数据 */
+	#endif /* !CONFIG_SMALL_MEMORY */
+
+	#ifdef CONFIG_EPOLL
+	/* 用于 epoll 事件轮询 */
+	struct list_head	f_ep_links;
+	struct list_head	f_tfile_llink;
+	#endif /* CONFIG_EPOLL */
+	/* 预分配的辅助数据，可由文件系统使用 */
+	struct address_space	*f_mapping;
+
+	/* 用于 NFS 等网络文件系统的锁 */
+#ifdef CONFIG_FSNOTIFY
+	struct fsnotify_mark_entry __rcu *f_fsnotify_marks;
+#endif
+};
+
+
+但是在你打开自己的文件之前操作系统已经打开了三个文件，下标0，1，2对应C语言中stdin，stdout，stderr三个文件，编程时你需要输入输出，这三个流（文件)打开是必然的，那C语言中的FILE结构体与file_struct有联系吗？有，但不是同一个东西，FILE是C库自己封装的结构体，其中封装了文件描述符（_fileno）
